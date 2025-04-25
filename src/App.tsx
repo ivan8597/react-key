@@ -119,23 +119,14 @@ const App = () => {
       setStatus(`Загружено моделей: ${loadedModels}/${totalModelsCorrect} (${modelName} ${success ? 'успешно' : 'с ошибкой'})`);
       if (loadedModels === totalModelsCorrect) {
         isSceneReadyRef.current = true;
-        setStatus('Сцена готова!');
-        if (hutRef.current) {
-          const hutDoor = hutRef.current.getObjectByName('DoorAndWindow');
-          if (hutDoor) {
-            hutDoor.userData.type = 'hutDoor';
-            clickableObjects.push(hutDoor);
-            hutInteriorBBoxRef.current = new THREE.Box3().setFromObject(hutRef.current);
-          } else {
-            setStatus("Ошибка: дверь избушки ('DoorAndWindow') не найдена!");
-          }
-        }
+        setStatus('Сцена готова! (Все модели загружены)');
       }
     };
 
     loader.load(
       '/models/player.glb',
       (gltf) => {
+        console.log(">>> Player LOADED successfully");
         playerRef.current = gltf.scene;
         playerRef.current.scale.set(1.9, 1.9, 1.9);
         playerRef.current.position.set(0, 0, 10);
@@ -144,6 +135,7 @@ const App = () => {
       },
       undefined,
       (error) => {
+        console.error(">>> Player FAILED to load", error);
         setStatus('Ошибка загрузки игрока: ' + (error.message || 'Неизвестная ошибка'));
         modelLoaded(false, 'player');
       }
@@ -152,14 +144,36 @@ const App = () => {
     loader.load(
       '/models/hut.glb',
       (gltf) => {
+        console.log(">>> Hut LOADED successfully");
         hutRef.current = gltf.scene;
         hutRef.current.position.set(10, 0, 10);
         hutRef.current.scale.set(2, 2, 2);
         scene.add(hutRef.current);
-        modelLoaded(true, 'hut');
+        
+        // --- Вычисляем BBox и ищем дверь СРАЗУ после загрузки избушки --- 
+        try {
+           hutInteriorBBoxRef.current = new THREE.Box3().setFromObject(hutRef.current);
+           console.log("Hut BBox calculated and assigned right after hut load:", hutInteriorBBoxRef.current);
+           const hutDoor = hutRef.current.getObjectByName('DoorAndWindow');
+           if (hutDoor) {
+               hutDoor.userData.type = 'hutDoor';
+               clickableObjects.push(hutDoor);
+               console.log("Hut door found and added to clickable objects.");
+           } else {
+               setStatus("Ошибка: дверь избушки ('DoorAndWindow') не найдена в модели!");
+               console.error("DoorAndWindow not found in hut model right after load.");
+           }
+        } catch (bboxError) {
+           console.error("Error calculating Hut BBox or finding door:", bboxError);
+           setStatus("Ошибка при обработке модели избушки.");
+        }
+        // --- Конец обработки избушки --- 
+
+        modelLoaded(true, 'hut'); // Вызываем modelLoaded ПОСЛЕ обработки BBox
       },
       undefined,
       (error) => {
+        console.error(">>> Hut FAILED to load", error);
         setStatus('Ошибка загрузки избушки: ' + (error.message || 'Неизвестная ошибка'));
         modelLoaded(false, 'hut');
       }
@@ -169,6 +183,7 @@ const App = () => {
       loader.load(
         '/models/stone.glb',
         (gltf) => {
+          console.log(`>>> Stone ${i} LOADED successfully`);
           const stone = gltf.scene;
           stone.position.set(Math.random() * 40 - 20, 0, Math.random() * 40 - 20);
           stone.scale.set(1.5, 1.5, 1.5);
@@ -181,6 +196,7 @@ const App = () => {
         },
         undefined,
         (error) => {
+          console.error(`>>> Stone ${i} FAILED to load`, error);
           setStatus(`Ошибка загрузки камня ${i}: ` + (error.message || 'Неизвестная ошибка'));
           modelLoaded(false, `stone_${i}`);
         }
@@ -190,6 +206,7 @@ const App = () => {
     loader.load(
       '/models/wizard.glb',
       (gltf) => {
+        console.log(">>> Wizard LOADED successfully");
         wizard = gltf.scene;
         wizard.position.set(5, 0, -5);
         wizard.scale.set(2, 2, 2);
@@ -200,6 +217,7 @@ const App = () => {
       },
       undefined,
       (error) => {
+        console.error(">>> Wizard FAILED to load", error);
         setStatus('Ошибка загрузки волшебника: ' + (error.message || 'Неизвестная ошибка'));
         modelLoaded(false, 'wizard');
       }
@@ -208,6 +226,7 @@ const App = () => {
     loader.load(
       '/models/bulldog.glb',
       (gltf) => {
+        console.log(">>> Bulldog LOADED successfully");
         bulldog = gltf.scene;
         bulldog.position.set(-5, 0, 5);
         bulldog.scale.set(3, 3, 3);
@@ -218,6 +237,7 @@ const App = () => {
       },
       undefined,
       (error) => {
+        console.error(">>> Bulldog FAILED to load", error);
         setStatus('Ошибка загрузки бульдога: ' + (error.message || 'Неизвестная ошибка'));
         modelLoaded(false, 'bulldog');
       }
@@ -461,10 +481,44 @@ const App = () => {
           setStatus('Ошибка удаления canvas: ' + (e instanceof Error ? e.message : 'Неизвестная ошибка'));
         }
       }
-      scene.children.forEach((child) => scene.remove(child));
-      renderer.dispose();
+      
+      // --- Корректная очистка ресурсов --- 
+      // Удаляем конкретные объекты и освобождаем ресурсы
+      if (ground) {
+        scene.remove(ground);
+        ground.geometry.dispose();
+        if (ground.material instanceof THREE.Material) {
+           ground.material.dispose();
+           // Проверяем, что материал поддерживает текстуру (map)
+           if (ground.material instanceof THREE.MeshStandardMaterial || ground.material instanceof THREE.MeshBasicMaterial) { 
+              if (ground.material.map) {
+                 ground.material.map.dispose(); // Dispose texture
+              }
+           }
+        }
+      }
+      if (playerRef.current) scene.remove(playerRef.current);
+      if (hutRef.current) scene.remove(hutRef.current);
+      if (wizard) scene.remove(wizard); // Удаляем объекты, добавленные напрямую
+      if (bulldog) scene.remove(bulldog);
+      stones.forEach(stone => scene.remove(stone)); // Удаляем камни
+      
+      // Очищаем массивы и рефы (на всякий случай)
+      clickableObjectsRef.current.length = 0;
+      stones.length = 0;
+      playerRef.current = null;
+      hutRef.current = null;
+      hutInteriorBBoxRef.current = null;
+      isSceneReadyRef.current = false;
+
+      // Удаляем свет
+      scene.remove(ambientLight);
+      scene.remove(directionalLight);
+
+      renderer.dispose(); // Освобождаем ресурсы рендерера
       mountRef.current?.removeEventListener('click', handleClick);
-      setStatus('Сцена очищена');
+      setStatus('Сцена и ресурсы очищены');
+      // --- Конец корректной очистки --- 
     };
   }, []);
 
